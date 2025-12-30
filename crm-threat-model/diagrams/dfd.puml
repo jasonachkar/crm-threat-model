@@ -1,0 +1,155 @@
+@startuml Multi-Tenant CRM - Data Flow Diagram
+!define RECTANGLE rectangle
+!define DATABASE database
+!define CLOUD cloud
+!define ACTOR actor
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultTextAlignment center
+skinparam rectangleBorderColor #333333
+skinparam rectangleBackgroundColor #E8F4F8
+skinparam databaseBorderColor #333333
+skinparam databaseBackgroundColor #FFF4E6
+skinparam cloudBorderColor #333333
+skinparam cloudBackgroundColor #E8F8E8
+skinparam actorBorderColor #333333
+skinparam actorBackgroundColor #FFE6E6
+
+' Define actors
+ACTOR "End User\n(Customer/Sales)" as EndUser #FFE6E6
+ACTOR "Tenant Admin" as TenantAdmin #FFE6E6
+ACTOR "Platform Admin\n(Support)" as PlatformAdmin #FFCCCC
+
+' Trust Boundary 1: Internet
+package "Trust Boundary: Internet" #EEEEEE {
+  RECTANGLE "Web Client\n(React SPA)\n[CDN Hosted]" as WebClient #E8F4F8
+}
+
+' Trust Boundary 2: Edge Layer
+package "Trust Boundary: Edge / DMZ" #DDDDDD {
+  RECTANGLE "API Gateway\n[TLS Termination]\n[Rate Limiting]" as APIGateway #E8F4F8
+  RECTANGLE "Web Application\nFirewall (WAF)\n[OWASP Rules]" as WAF #E8F4F8
+}
+
+' Trust Boundary 3: Application Layer
+package "Trust Boundary: Application Services (Private Network)" #CCCCCC {
+  RECTANGLE "CRM Application\nService\n[REST API]\n[Tenant Scoping]" as CRMApp #E8F4F8
+  RECTANGLE "Background Worker\nService\n[Queue Processor]\n[Async Jobs]" as Worker #E8F4F8
+  RECTANGLE "Admin Portal\n[Internal Only]\n[MFA Required]" as AdminPortal #FFCCCC
+}
+
+' Trust Boundary 4: Data Layer
+package "Trust Boundary: Data Layer (Private Network)" #BBBBBB {
+  DATABASE "PostgreSQL\nDatabase\n[Multi-Tenant]\n[Encrypted at Rest]" as PostgreSQL #FFF4E6
+  DATABASE "Redis Cache\n[Sessions]\n[Rate Limits]" as Redis #FFF4E6
+  DATABASE "Object Storage\n(S3 / Azure Blob)\n[File Attachments]" as ObjectStorage #FFF4E6
+  DATABASE "Message Queue\n(SQS / Service Bus)\n[Async Jobs]" as MessageQueue #FFF4E6
+}
+
+' Trust Boundary 5: Third Party Services
+package "Trust Boundary: Third-Party Services" #AAAAAA {
+  CLOUD "Identity Provider\n(Auth0 / Entra ID)\n[OIDC]" as IdP #E8F8E8
+  CLOUD "Email Provider\n(SendGrid / SES)" as EmailProvider #E8F8E8
+  CLOUD "Payment Provider\n(Stripe)" as PaymentProvider #E8F8E8
+}
+
+' Trust Boundary 6: Observability
+package "Trust Boundary: Observability (Private Network)" #CCCCCC {
+  DATABASE "Centralized Logging\n(SIEM / Splunk)\n[Audit Trail]" as Logging #FFF4E6
+  DATABASE "Metrics & Monitoring\n(Prometheus / CloudWatch)" as Monitoring #FFF4E6
+}
+
+' Data Flows
+
+' User authentication flow
+EndUser -down-> WebClient : "1. Browse\n[HTTPS]"
+TenantAdmin -down-> WebClient : "1. Browse\n[HTTPS]"
+WebClient -down-> IdP : "2. Login Request\n[OIDC/OAuth2]\n[User Credentials]"
+IdP -up-> WebClient : "3. JWT Tokens\n[ID Token, Access Token,\nRefresh Token]\n[HTTPS]"
+
+' API requests
+WebClient -down-> WAF : "4. API Request\n[HTTPS]\n[Authorization: Bearer Token]\n[JSON Data]"
+WAF -down-> APIGateway : "5. Filtered Request\n[HTTPS]\n[OWASP Rules Applied]"
+APIGateway -down-> CRMApp : "6. Routed Request\n[HTTP/HTTPS]\n[Correlation ID Added]"
+
+' Application to data layer
+CRMApp -down-> PostgreSQL : "7. Tenant-Scoped Query\n[WHERE tenant_id=:tenant]\n[Parameterized SQL]"
+PostgreSQL -up-> CRMApp : "8. Query Results\n[CRM Data]"
+
+CRMApp -down-> Redis : "9. Cache Lookup\n[tenant:id:key]\n[Session/Permissions]"
+Redis -up-> CRMApp : "10. Cached Data"
+
+CRMApp -down-> ObjectStorage : "11. Generate Signed URL\n[15-min expiration]\n[tenant-id/file-id]"
+WebClient -down-> ObjectStorage : "12. Upload/Download File\n[Pre-signed URL]\n[HTTPS]"
+
+CRMApp -down-> MessageQueue : "13. Enqueue Job\n[JSON Message]\n[tenant_id, job_type, payload]"
+
+' Background worker flow
+Worker -up-> MessageQueue : "14. Poll Queue\n[Receive Message]"
+Worker -down-> PostgreSQL : "15. Tenant-Scoped Query\n[WHERE tenant_id=:tenant]"
+Worker -right-> EmailProvider : "16. Send Email\n[HTTPS/API]\n[SendGrid API Key]"
+EmailProvider -right-> EndUser : "17. Email Delivery\n[SMTP]"
+Worker -down-> ObjectStorage : "18. Store Generated Report\n[tenant-id/reports/]"
+
+' Payment flow (optional)
+CRMApp -right-> PaymentProvider : "19. Process Payment\n[HTTPS/API]\n[Payment Tokens]"
+PaymentProvider -left-> CRMApp : "20. Webhook Event\n[HTTPS]\n[Signature Validated]"
+
+' Admin access
+PlatformAdmin -down-> AdminPortal : "21. Admin Login\n[HTTPS]\n[MFA Required]\n[VPN/IP Restricted]"
+AdminPortal -down-> CRMApp : "22. Admin API Call\n[admin:impersonate scope]\n[Audit Logged]"
+
+' Token validation
+CRMApp -up-> IdP : "23. Validate JWT\n[JWKS Endpoint]\n[Public Keys]"
+
+' Logging and monitoring
+CRMApp -right-> Logging : "24. Audit Logs\n[Auth Events, Admin Actions,\nData Access]"
+Worker -right-> Logging : "25. Job Logs\n[Processing Status]"
+APIGateway -right-> Monitoring : "26. Metrics\n[Request Rate, Latency,\nErrors]"
+CRMApp -right-> Monitoring : "27. App Metrics\n[Health, Performance]"
+
+' Trust boundary annotations
+note top of WebClient
+  **Untrusted Client**
+  - XSS/CSRF risks
+  - Token storage
+  - Client-side validation only for UX
+end note
+
+note bottom of WAF
+  **Edge Security Layer**
+  - OWASP Top 10 protection
+  - Bot detection
+  - Rate limiting
+end note
+
+note bottom of CRMApp
+  **Critical Trust Boundary**
+  - JWT validation
+  - Tenant ID extraction from token
+  - RBAC enforcement
+  - All queries tenant-scoped
+end note
+
+note bottom of PostgreSQL
+  **Multi-Tenant Data Store**
+  - tenant_id on all tables
+  - Row-level security (RLS)
+  - Encrypted at rest
+end note
+
+note right of IdP
+  **Trusted Authority**
+  - Issues signed JWTs
+  - MFA enforcement
+  - Token lifecycle
+end note
+
+note right of MessageQueue
+  **Async Processing**
+  - Decouples API from long tasks
+  - Messages include tenant_id
+  - Dead-letter queue for failures
+end note
+
+@enduml

@@ -1,0 +1,142 @@
+@startuml OIDC Authentication & API Access Flow
+!theme plain
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam shadowing false
+
+actor "End User" as User
+participant "Web Client\n(SPA)" as Client
+participant "Identity Provider\n(Auth0/Entra ID)\n[OIDC]" as IdP
+participant "API Gateway" as Gateway
+participant "CRM API\nService" as API
+participant "PostgreSQL\nDatabase" as DB
+
+== Initial Login (OIDC Authorization Code Flow with PKCE) ==
+
+User -> Client: 1. Navigate to app\n(https://crm.example.com)
+activate Client
+Client -> Client: 2. Check for valid token\n(none found)
+Client -> Client: 3. Generate PKCE\ncode_verifier & code_challenge
+Client -> IdP: 4. Authorization Request\nGET /authorize?\n  response_type=code\n  &client_id=crm_app\n  &redirect_uri=https://crm.example.com/callback\n  &scope=openid profile email\n  &code_challenge=[PKCE]\n  &code_challenge_method=S256
+activate IdP
+
+IdP -> User: 5. Show login page\n(username/password)
+User -> IdP: 6. Submit credentials\n+ MFA code (if required)
+IdP -> IdP: 7. Authenticate user\nVerify credentials & MFA
+IdP -> IdP: 8. Create authorization code
+IdP -> Client: 9. Redirect to callback URL\nGET https://crm.example.com/callback?code=[AUTH_CODE]
+deactivate IdP
+
+Client -> IdP: 10. Token Request\nPOST /oauth/token\n  grant_type=authorization_code\n  &code=[AUTH_CODE]\n  &redirect_uri=...\n  &client_id=crm_app\n  &code_verifier=[PKCE_VERIFIER]
+activate IdP
+IdP -> IdP: 11. Verify code_verifier\nagainst code_challenge
+IdP -> IdP: 12. Generate tokens:\n- ID Token (JWT, user identity)\n- Access Token (JWT, API access)\n- Refresh Token (opaque, long-lived)
+IdP -> Client: 13. Token Response\n{\n  "id_token": "eyJhbGc...",\n  "access_token": "eyJhbGc...",\n  "refresh_token": "RT_abc123...",\n  "expires_in": 3600,\n  "token_type": "Bearer"\n}
+deactivate IdP
+
+Client -> Client: 14. Store tokens\nlocalStorage or httpOnly cookie\n(access_token + refresh_token)
+Client -> User: 15. Redirect to dashboard\n(authenticated)
+deactivate Client
+
+note over Client, IdP
+  **Access Token (JWT) Claims**:
+  {
+    "iss": "https://auth.example.com",
+    "sub": "user-123",
+    "aud": "crm-api",
+    "exp": 1735560000,
+    "iat": 1735556400,
+    "tenant_id": "tenant-abc",
+    "email": "user@example.com",
+    "roles": ["sales_rep"]
+  }
+end note
+
+== API Request with JWT ==
+
+User -> Client: 16. User action:\n"View Contacts"
+activate Client
+Client -> Gateway: 17. API Request\nGET /api/contacts?page=1&limit=50\nAuthorization: Bearer [ACCESS_TOKEN]\nContent-Type: application/json
+activate Gateway
+
+Gateway -> Gateway: 18. Rate limiting check\n(within limits)
+Gateway -> API: 19. Route request\n(add correlation-id header)
+activate API
+
+API -> API: 20. Extract JWT from\nAuthorization header
+API -> IdP: 21. Fetch JWKS public keys\nGET /.well-known/jwks.json\n(cached for 24h)
+activate IdP
+IdP -> API: 22. Return public keys
+deactivate IdP
+
+API -> API: 23. Validate JWT:\n✓ Signature (using JWKS)\n✓ Issuer (iss claim)\n✓ Audience (aud claim)\n✓ Expiration (exp > now)\n✓ Not before (nbf <= now)
+
+API -> API: 24. Extract claims:\ntenant_id = "tenant-abc"\nuser_id = "user-123"\nroles = ["sales_rep"]
+
+API -> API: 25. Authorization check:\nCan user read contacts?\n(RBAC: sales_rep → read:contacts)
+
+API -> DB: 26. Execute query:\nSELECT * FROM contacts\nWHERE tenant_id = 'tenant-abc'\n  AND (owner_id = 'user-123'\n       OR visibility = 'team')\nLIMIT 50 OFFSET 0;
+activate DB
+DB -> DB: 27. Execute query\n(tenant isolation enforced)
+DB -> API: 28. Return rows\n(10 contacts)
+deactivate DB
+
+API -> API: 29. Serialize response\n(exclude sensitive fields)
+API -> Gateway: 30. HTTP 200 OK\n{\n  "data": [\n    {"id": "c1", "name": "Acme Corp", ...},\n    ...\n  ],\n  "pagination": {"page": 1, "total": 10}\n}
+deactivate API
+
+Gateway -> Client: 31. Return response\n(add security headers:\n X-Content-Type-Options,\n X-Frame-Options, etc.)
+deactivate Gateway
+
+Client -> Client: 32. Render contact list
+Client -> User: 33. Display contacts
+deactivate Client
+
+== Token Refresh (when access token expires) ==
+
+User -> Client: 34. User action\n(access token expired)
+activate Client
+Client -> Client: 35. Detect 401 Unauthorized\n(access token expired)
+Client -> IdP: 36. Refresh Token Request\nPOST /oauth/token\n  grant_type=refresh_token\n  &refresh_token=[REFRESH_TOKEN]\n  &client_id=crm_app
+activate IdP
+
+IdP -> IdP: 37. Validate refresh token:\n✓ Not expired (30 days)\n✓ Not revoked\n✓ Matches client_id
+IdP -> IdP: 38. Generate new access token\n(refresh token rotated - optional)
+IdP -> Client: 39. New Token Response\n{\n  "access_token": "eyJhbGc...",\n  "expires_in": 3600,\n  "refresh_token": "RT_xyz789..." (new)\n}
+deactivate IdP
+
+Client -> Client: 40. Update stored tokens
+Client -> Gateway: 41. Retry original request\nwith new access token
+activate Gateway
+Gateway -> API: (continue as steps 19-30)
+deactivate Gateway
+deactivate Client
+
+== Logout ==
+
+User -> Client: 42. Click "Logout"
+activate Client
+Client -> IdP: 43. Revoke refresh token\nPOST /oauth/revoke\n  token=[REFRESH_TOKEN]\n  &token_type_hint=refresh_token
+activate IdP
+IdP -> IdP: 44. Invalidate refresh token\n(cannot be used again)
+IdP -> Client: 45. HTTP 200 OK
+deactivate IdP
+
+Client -> Client: 46. Clear stored tokens\n(localStorage.clear())
+Client -> User: 47. Redirect to login page
+deactivate Client
+
+note over User, DB
+  **Security Controls in Flow**:
+  ✓ PKCE prevents authorization code interception
+  ✓ TLS for all communications (not shown)
+  ✓ JWT signature prevents token forgery
+  ✓ Short-lived access tokens (1 hour)
+  ✓ Refresh token rotation (optional, recommended)
+  ✓ tenant_id immutably embedded in token
+  ✓ Tenant-scoped database queries
+  ✓ RBAC enforcement at API layer
+  ✓ Token revocation on logout
+end note
+
+@enduml

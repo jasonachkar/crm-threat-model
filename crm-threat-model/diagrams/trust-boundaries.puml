@@ -1,0 +1,139 @@
+@startuml Multi-Tenant CRM - Trust Boundaries
+!define RECTANGLE rectangle
+
+skinparam backgroundColor #FFFFFF
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+' Internet Zone (Untrusted)
+package "Zone: Internet (Untrusted)" #FFE6E6 {
+  rectangle "End Users" as Users #FFCCCC
+  rectangle "Attackers" as Attackers #FF9999
+  rectangle "Web Client (SPA)\n[Static CDN]" as WebClient #FFCCCC
+}
+
+' DMZ / Edge Zone
+package "Zone: DMZ / Edge Layer" #FFF4E6 {
+  rectangle "Web Application\nFirewall (WAF)" as WAF #FFDDAA
+  rectangle "API Gateway\n[TLS Termination]" as APIGateway #FFDDAA
+}
+
+' Application Zone (Private Network)
+package "Zone: Application Services\n(Private Network - Trusted)" #E8F4F8 {
+  rectangle "CRM Application\nService\n[JWT Validation]\n[Tenant Scoping]" as CRMApp #CCE5FF
+  rectangle "Background Worker\nService" as Worker #CCE5FF
+}
+
+' Data Zone (Highly Restricted)
+package "Zone: Data Layer\n(Private Network - Highly Restricted)" #E8F8E8 {
+  rectangle "PostgreSQL\n[Multi-Tenant DB]" as DB #CCFFCC
+  rectangle "Redis Cache" as Cache #CCFFCC
+  rectangle "Object Storage\n(S3/Blob)" as Storage #CCFFCC
+  rectangle "Message Queue" as Queue #CCFFCC
+}
+
+' Admin Zone (Restricted)
+package "Zone: Admin Network\n(VPN/IP Restricted)" #F0E6FF {
+  rectangle "Platform Admins\n[MFA Required]" as Admins #D9CCFF
+  rectangle "Admin Portal" as AdminPortal #D9CCFF
+}
+
+' Third-Party Zone
+package "Zone: Third-Party Services\n(External - Partially Trusted)" #FFF0F0 {
+  rectangle "Identity Provider\n(Auth0/Entra)" as IdP #FFD9D9
+  rectangle "Email Provider\n(SendGrid)" as Email #FFD9D9
+  rectangle "Payment Provider\n(Stripe)" as Payment #FFD9D9
+}
+
+' Observability Zone
+package "Zone: Observability\n(Private Network)" #F5F5F5 {
+  rectangle "SIEM / Logging" as Logging #E0E0E0
+  rectangle "Metrics / Monitoring" as Monitoring #E0E0E0
+}
+
+' Trust Boundary Crossings
+
+' Boundary 1: Internet → Edge
+Users -down-> WebClient : "User Access\n[HTTPS]"
+Attackers -down-> WebClient : "Attack Vectors\n[HTTPS]"
+WebClient -down-> WAF : "**Boundary 1**\nInternet → DMZ\n━━━━━━━━━━━\n✓ TLS Required\n✓ WAF Rules\n✓ DDoS Protection\n✓ Auth Token Required"
+
+' Boundary 2: Edge → Application
+WAF -down-> APIGateway : "Filtered Traffic"
+APIGateway -down-> CRMApp : "**Boundary 2**\nDMZ → Application\n━━━━━━━━━━━\n✓ Network Segmentation\n✓ JWT Validation\n✓ Tenant ID Extraction\n✓ RBAC Enforcement"
+
+' Boundary 3: Application → Data
+CRMApp -down-> DB : "**Boundary 3**\nApp → Data\n━━━━━━━━━━━\n✓ Parameterized Queries\n✓ Tenant-Scoped WHERE Clauses\n✓ Least-Privilege DB User\n✓ Connection Pooling"
+
+CRMApp -down-> Cache : "Cache Access\n[Tenant-namespaced keys]"
+CRMApp -down-> Storage : "Signed URL Generation\n[tenant-id/file-id prefix]"
+CRMApp -down-> Queue : "Enqueue Jobs\n[tenant_id in message]"
+
+Worker -up-> Queue : "Poll Queue"
+Worker -down-> DB : "Tenant-Scoped Queries"
+Worker -down-> Storage : "Write Reports"
+
+' Boundary 4: Application → Third Party
+WebClient -up-> IdP : "**Boundary 4**\nApp → Third Party\n━━━━━━━━━━━\n✓ OIDC/OAuth2\n✓ Token Validation\n✓ PKCE for Auth Code"
+
+CRMApp -right-> IdP : "Token Validation\n[JWKS Endpoint]"
+Worker -right-> Email : "**Boundary 5**\nWorker → Third Party\n━━━━━━━━━━━\n✓ API Key Rotation\n✓ TLS\n✓ SPF/DKIM/DMARC"
+
+CRMApp -right-> Payment : "Payment Processing\n[Webhook Signature Validation]"
+
+' Boundary 6: Admin Network → Application
+Admins -down-> AdminPortal : "Admin Access\n[HTTPS, MFA]"
+AdminPortal -down-> CRMApp : "**Boundary 6**\nAdmin → Application\n━━━━━━━━━━━\n✓ IP Allowlist / VPN\n✓ MFA Required\n✓ Audit Logging\n✓ Time-Limited Sessions"
+
+' Logging flows (one-way)
+CRMApp -right-> Logging : "Audit Events\n[One-way]"
+Worker -right-> Logging : "Job Logs\n[One-way]"
+APIGateway -right-> Monitoring : "Metrics\n[One-way]"
+CRMApp -right-> Monitoring : "Health Metrics\n[One-way]"
+
+' Boundary 7: Logical Tenant Isolation
+note bottom of CRMApp
+  **Boundary 7: Tenant A ↔ Tenant B**
+  **━━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+  **MOST CRITICAL BOUNDARY**
+
+  Controls:
+  ✓ tenant_id from JWT claims only (immutable)
+  ✓ Every DB query: WHERE tenant_id = :tenant
+  ✓ Row-level security (RLS) policies
+  ✓ Object storage keys: tenant-{id}/...
+  ✓ Cache keys: tenant:{id}:...
+  ✓ Queue messages: tenant_id validation
+  ✓ No client-side tenant selection
+
+  Threats:
+  ✗ BOLA/IDOR across tenants
+  ✗ SQL injection bypassing filters
+  ✗ Cache key collision
+  ✗ Shared resources without scoping
+end note
+
+' Key
+legend bottom left
+  **Trust Boundary Key**
+  ━━━━━━━━━━━━━━━━━━━━━━━━
+
+  **High Risk Boundaries** (External → Internal):
+  • Boundary 1: Internet → DMZ
+  • Boundary 2: DMZ → Application
+  • Boundary 7: Tenant A ↔ Tenant B (Logical)
+
+  **Medium Risk Boundaries**:
+  • Boundary 3: Application → Data
+  • Boundary 4/5: Application → Third Party
+  • Boundary 6: Admin Network → Application
+
+  **Controls Required at ALL Boundaries**:
+  ✓ Authentication & Authorization
+  ✓ Input Validation
+  ✓ Encryption in Transit
+  ✓ Audit Logging
+  ✓ Least Privilege Access
+end legend
+
+@enduml
