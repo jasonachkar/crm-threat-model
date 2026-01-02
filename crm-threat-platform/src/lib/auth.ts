@@ -1,6 +1,5 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
-import { DrizzleAdapter } from '@auth/drizzle-adapter';
 import { db } from '@/lib/db';
 import { users } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -13,7 +12,9 @@ const loginSchema = z.object({
 });
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: DrizzleAdapter(db),
+  // Note: DrizzleAdapter removed - not needed for JWT sessions
+  // The adapter is only required for database sessions
+  trustHost: true, // Required for NextAuth v5 in development
   session: {
     strategy: 'jwt',
   },
