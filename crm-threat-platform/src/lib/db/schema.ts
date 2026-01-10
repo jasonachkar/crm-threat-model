@@ -1,4 +1,4 @@
-import { pgTable, varchar, text, timestamp, uuid, jsonb, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, varchar, text, timestamp, uuid, jsonb, pgEnum, boolean } from 'drizzle-orm/pg-core';
 
 // Enums
 export const userRoleEnum = pgEnum('user_role', ['admin', 'editor', 'viewer']);
@@ -26,6 +26,9 @@ export const users = pgTable('users', {
   email: varchar('email', { length: 255 }).notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   role: userRoleEnum('role').notNull().default('viewer'),
+  mfaEnabled: boolean('mfa_enabled').notNull().default(false),
+  mfaSecret: text('mfa_secret'),
+  mfaEnrolledAt: timestamp('mfa_enrolled_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -110,12 +113,14 @@ export const auditLog = pgTable('audit_log', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id').references(() => users.id).notNull(),
   tenantId: uuid('tenant_id').references(() => tenants.id).notNull(),
+  userId: uuid('user_id').references(() => users.id),
   action: varchar('action', { length: 100 }).notNull(), // 'update_threat', 'mark_completed', etc.
   entityType: varchar('entity_type', { length: 50 }).notNull(), // 'threat', 'requirement', 'mitigation'
   entityId: text('entity_id').notNull(),
   changes: jsonb('changes'), // { before: {...}, after: {...} }
   ipAddress: varchar('ip_address', { length: 45 }),
   userAgent: text('user_agent'),
+  suspicious: boolean('suspicious').notNull().default(false),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 

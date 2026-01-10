@@ -1,16 +1,24 @@
 import { db } from '@/lib/db';
-import { threats } from '@/lib/db/schema';
+import { auditLog, threats, users } from '@/lib/db/schema';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Shield, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 import Link from 'next/link';
 import DashboardCharts from '@/components/dashboard-charts';
+import { and, eq, gte } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
   // Fetch real statistics from database
   const allThreats = await db.select().from(threats);
+  const adminUsers = await db.select().from(users).where(eq(users.role, 'admin'));
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const authEvents = await db
+    .select()
+    .from(auditLog)
+    .where(and(eq(auditLog.entityType, 'auth'), gte(auditLog.createdAt, since)));
 
   const stats = {
     total: allThreats.length,
@@ -20,6 +28,16 @@ export default async function DashboardPage() {
     open: allThreats.filter(t => t.status === 'Open').length,
     inProgress: allThreats.filter(t => t.status === 'In Progress').length,
   };
+
+  const mfaEnabledAdmins = adminUsers.filter(user => user.mfaEnabled).length;
+  const mfaCoverage = adminUsers.length > 0
+    ? Math.round((mfaEnabledAdmins / adminUsers.length) * 100)
+    : 0;
+
+  const throttledAuthEvents = authEvents.filter(event => event.action === 'auth_login_throttled').length;
+  const failedAuthEvents = authEvents.filter(event =>
+    ['auth_login_failed', 'auth_mfa_failed', 'auth_mfa_missing', 'auth_login_invalid'].includes(event.action),
+  ).length;
 
   // STRIDE breakdown
   const strideBreakdown = allThreats.reduce((acc, threat) => {
@@ -105,6 +123,40 @@ export default async function DashboardPage() {
 
       {/* Charts */}
       <DashboardCharts threats={allThreats} />
+
+      {/* Security Posture */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Security Posture</CardTitle>
+          <CardDescription>Authentication resilience and MFA adoption</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <div className="text-sm text-muted-foreground">Admin MFA Coverage</div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-bold">{mfaCoverage}%</span>
+              <Badge variant={mfaCoverage >= 80 ? 'default' : 'secondary'}>
+                {mfaEnabledAdmins}/{adminUsers.length} admins enrolled
+              </Badge>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Encourage MFA enrollment for privileged accounts.
+            </p>
+          </div>
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <div className="text-sm text-muted-foreground">Login Throttling (last 24h)</div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-3xl font-bold">{throttledAuthEvents}</span>
+              <Badge variant={throttledAuthEvents > 0 ? 'destructive' : 'secondary'}>
+                {failedAuthEvents} failed attempts
+              </Badge>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Lockouts help reduce brute-force exposure.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Critical Threats Alert */}
       {criticalThreats.length > 0 && (

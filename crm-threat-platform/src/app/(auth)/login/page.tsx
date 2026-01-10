@@ -12,6 +12,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [totp, setTotp] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -24,6 +25,7 @@ export default function LoginPage() {
       const result = await signIn('credentials', {
         email,
         password,
+        totp: totp || undefined,
         redirect: false,
       });
 
@@ -69,6 +71,18 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="totp">Authenticator Code (admins with MFA)</Label>
+              <Input
+                id="totp"
+                type="text"
+                placeholder="123456"
+                value={totp}
+                onChange={(e) => setTotp(e.target.value)}
+                inputMode="numeric"
+                autoComplete="one-time-code"
               />
             </div>
             {error && (
