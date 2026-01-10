@@ -11,6 +11,25 @@ import bcrypt from 'bcryptjs';
 import { parse } from 'csv-parse/sync';
 import * as fs from 'fs';
 
+// Type for CSV records
+interface ThreatCSVRecord {
+  'ID': string;
+  'STRIDE Category': string;
+  'Threat Title': string;
+  'Affected Components': string;
+  'Asset': string;
+  'Attack Scenario Summary': string;
+  'Impact Confidentiality': string;
+  'Impact Integrity': string;
+  'Impact Availability': string;
+  'Likelihood': string;
+  'Severity': string;
+  'OWASP Mapping': string;
+  'Priority': string;
+  'Owner': string;
+  'Status': string;
+}
+
 // Map CSV column names to database schema
 const mapImpact = (value: string): 'None' | 'Low' | 'Medium' | 'High' | 'Critical' => {
   const normalized = value.trim();
@@ -176,7 +195,7 @@ async function seedThreats(tenantId: string) {
   const records = parse(csvContent, {
     columns: true,
     skip_empty_lines: true,
-  });
+  }) as ThreatCSVRecord[];
 
   console.log(`Found ${records.length} threats in CSV`);
 
