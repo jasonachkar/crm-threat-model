@@ -11,6 +11,15 @@ export const statusEnum = pgEnum('status', ['Open', 'In Progress', 'Mitigated', 
 export const requirementStatusEnum = pgEnum('requirement_status', ['not_implemented', 'in_progress', 'implemented', 'partial']);
 export const mitigationStatusEnum = pgEnum('mitigation_status', ['planned', 'in_progress', 'completed']);
 
+// Tenants table
+export const tenants = pgTable('tenants', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  name: text('name').notNull(),
+  slug: varchar('slug', { length: 100 }).notNull().unique(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 // Users table
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -21,9 +30,19 @@ export const users = pgTable('users', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+// Tenant memberships table
+export const tenantMemberships = pgTable('tenant_memberships', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  tenantId: uuid('tenant_id').references(() => tenants.id).notNull(),
+  userId: uuid('user_id').references(() => users.id).notNull(),
+  role: userRoleEnum('role').notNull().default('viewer'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 // Threats table
 export const threats = pgTable('threats', {
   id: varchar('id', { length: 20 }).primaryKey(), // TM-001, TM-002, etc.
+  tenantId: uuid('tenant_id').references(() => tenants.id).notNull(),
   strideCategory: strideEnum('stride_category').notNull(),
   title: text('title').notNull(),
   affectedComponents: text('affected_components').notNull(),
@@ -54,6 +73,7 @@ export const threats = pgTable('threats', {
 // Requirements table
 export const requirements = pgTable('requirements', {
   id: uuid('id').defaultRandom().primaryKey(),
+  tenantId: uuid('tenant_id').references(() => tenants.id).notNull(),
   section: varchar('section', { length: 255 }).notNull(), // e.g., "Tenant Isolation", "Authentication"
   description: text('description').notNull(),
   status: requirementStatusEnum('status').notNull().default('not_implemented'),
@@ -69,6 +89,7 @@ export const requirements = pgTable('requirements', {
 // Mitigations table
 export const mitigations = pgTable('mitigations', {
   id: uuid('id').defaultRandom().primaryKey(),
+  tenantId: uuid('tenant_id').references(() => tenants.id).notNull(),
   code: varchar('code', { length: 20 }).notNull().unique(), // P0-1, P1-1, QW-1, etc.
   title: text('title').notNull(),
   description: text('description').notNull(),
@@ -88,6 +109,7 @@ export const mitigations = pgTable('mitigations', {
 export const auditLog = pgTable('audit_log', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id').references(() => users.id).notNull(),
+  tenantId: uuid('tenant_id').references(() => tenants.id).notNull(),
   action: varchar('action', { length: 100 }).notNull(), // 'update_threat', 'mark_completed', etc.
   entityType: varchar('entity_type', { length: 50 }).notNull(), // 'threat', 'requirement', 'mitigation'
   entityId: text('entity_id').notNull(),
@@ -100,6 +122,12 @@ export const auditLog = pgTable('audit_log', {
 // Type exports for TypeScript
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+
+export type Tenant = typeof tenants.$inferSelect;
+export type NewTenant = typeof tenants.$inferInsert;
+
+export type TenantMembership = typeof tenantMemberships.$inferSelect;
+export type NewTenantMembership = typeof tenantMemberships.$inferInsert;
 
 export type Threat = typeof threats.$inferSelect;
 export type NewThreat = typeof threats.$inferInsert;

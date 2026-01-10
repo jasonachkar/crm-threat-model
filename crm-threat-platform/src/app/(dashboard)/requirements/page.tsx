@@ -9,21 +9,21 @@ const requirementSections = [
       {
         id: 'REQ-001',
         description: 'Implement row-level security (RLS) to enforce tenant_id filtering on all queries',
-        status: 'not_implemented',
+        status: 'implemented',
         priority: 'P0',
         threatRefs: ['TM-017', 'TM-012'],
       },
       {
         id: 'REQ-002',
         description: 'Add tenant_id validation middleware to all API endpoints',
-        status: 'not_implemented',
+        status: 'in_progress',
         priority: 'P0',
         threatRefs: ['TM-017', 'TM-012'],
       },
       {
         id: 'REQ-003',
         description: 'Enforce tenant isolation in background jobs and async processes',
-        status: 'not_implemented',
+        status: 'in_progress',
         priority: 'P1',
         threatRefs: ['TM-017'],
       },
@@ -176,9 +176,11 @@ const getPriorityColor = (priority: string) => {
 
 export default function RequirementsPage() {
   const totalRequirements = requirementSections.reduce((acc, section) => acc + section.requirements.length, 0);
-  const implementedCount = 0; // All are not_implemented for now
-  const inProgressCount = 0;
-  const notImplementedCount = totalRequirements;
+  const allRequirements = requirementSections.flatMap((section) => section.requirements);
+  const implementedCount = allRequirements.filter((req) => req.status === 'implemented').length;
+  const inProgressCount = allRequirements.filter((req) => req.status === 'in_progress').length;
+  const partialCount = allRequirements.filter((req) => req.status === 'partial').length;
+  const notImplementedCount = totalRequirements - implementedCount - inProgressCount - partialCount;
 
   return (
     <div className="space-y-6">

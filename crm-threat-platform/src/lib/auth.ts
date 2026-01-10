@@ -1,7 +1,7 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { db } from '@/lib/db';
-import { users } from '@/lib/db/schema';
+import { tenantMemberships, users } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
@@ -55,10 +55,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
+        const [membership] = await db
+          .select()
+          .from(tenantMemberships)
+          .where(eq(tenantMemberships.userId, user.id))
+          .limit(1);
+
+        if (!membership) {
+          return null;
+        }
+
         return {
           id: user.id,
           email: user.email,
           role: user.role,
+          tenantId: membership.tenantId,
         };
       },
     }),
@@ -68,6 +79,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.id = user.id;
         token.role = user.role;
+        token.tenantId = user.tenantId;
       }
       return token;
     },
@@ -75,6 +87,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (token && session.user) {
         session.user.id = token.id as string;
         session.user.role = token.role as 'admin' | 'editor' | 'viewer';
+        session.user.tenantId = token.tenantId as string;
       }
       return session;
     },
