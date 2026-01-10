@@ -188,6 +188,65 @@ export default async function ThreatDetailPage({ params }: { params: { id: strin
             Mitigation
           </TabsTrigger>
         </TabsList>
+      {(threat.cloudProvider || threat.cloudAssetType || threat.cloudControlMapping?.length) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Cloud Context</CardTitle>
+            <CardDescription>Cloud-specific metadata for traceability</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div>
+                <div className="text-sm font-medium mb-2">Cloud Provider</div>
+                <Badge variant="outline">{threat.cloudProvider || 'N/A'}</Badge>
+              </div>
+              <div>
+                <div className="text-sm font-medium mb-2">Asset Type</div>
+                <Badge variant="outline">{threat.cloudAssetType || 'N/A'}</Badge>
+              </div>
+              <div>
+                <div className="text-sm font-medium mb-2">Control Mapping</div>
+                {threat.cloudControlMapping?.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {threat.cloudControlMapping.map((control) => (
+                      <Badge key={control} variant="secondary">
+                        {control}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <Badge variant="outline">N/A</Badge>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Ownership & Timeline */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Ownership & Timeline</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <div className="text-sm font-medium mb-2">Owner</div>
+              <p className="text-sm text-muted-foreground">{threat.owner}</p>
+            </div>
+            <div>
+              <div className="text-sm font-medium mb-2">Created</div>
+              <p className="text-sm text-muted-foreground">
+                {new Date(threat.createdAt).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
         {/* Details Tab */}
         <TabsContent value="details" className="space-y-4">

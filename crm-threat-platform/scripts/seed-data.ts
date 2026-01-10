@@ -5,7 +5,8 @@ import * as path from 'path';
 dotenv.config({ path: path.join(__dirname, '../.env.local') });
 
 import { db } from '../src/lib/db';
-import { users, threats } from '../src/lib/db/schema';
+import { mitigations, requirements, tenantMemberships, tenants, threats, users } from '../src/lib/db/schema';
+import { and, eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { parse } from 'csv-parse/sync';
 import * as fs from 'fs';
@@ -83,7 +84,49 @@ const mapStrideCategory = (value: string): 'Spoofing' | 'Tampering' | 'Repudiati
   return 'Spoofing'; // Default fallback
 };
 
-async function seedUsers() {
+async function seedTenant(): Promise<string> {
+  console.log('Seeding demo tenant...');
+
+  const [existingTenant] = await db
+    .select()
+    .from(tenants)
+    .where(eq(tenants.slug, 'demo'))
+    .limit(1);
+
+  if (existingTenant) {
+    console.log(`✓ Demo tenant already exists (${existingTenant.name})`);
+    return existingTenant.id;
+  }
+
+  const [tenant] = await db
+    .insert(tenants)
+    .values({
+      name: 'Demo Tenant',
+      slug: 'demo',
+    })
+    .returning();
+
+  console.log(`✓ Demo tenant created (${tenant.name})`);
+  return tenant.id;
+}
+
+async function ensureMembership(userId: string, tenantId: string, role: 'admin' | 'editor' | 'viewer') {
+  const [existingMembership] = await db
+    .select()
+    .from(tenantMemberships)
+    .where(and(eq(tenantMemberships.userId, userId), eq(tenantMemberships.tenantId, tenantId)))
+    .limit(1);
+
+  if (!existingMembership) {
+    await db.insert(tenantMemberships).values({
+      userId,
+      tenantId,
+      role,
+    });
+  }
+}
+
+async function seedUsers(tenantId: string) {
   console.log('Seeding users...');
 
   // Create admin user
@@ -113,13 +156,29 @@ async function seedUsers() {
     role: 'viewer',
   }).onConflictDoNothing();
 
+  const [adminUser] = await db.select().from(users).where(eq(users.email, 'admin@crm-threat.com'));
+  const [editorUser] = await db.select().from(users).where(eq(users.email, 'editor@crm-threat.com'));
+  const [viewerUser] = await db.select().from(users).where(eq(users.email, 'viewer@crm-threat.com'));
+
+  if (adminUser) {
+    await ensureMembership(adminUser.id, tenantId, 'admin');
+  }
+
+  if (editorUser) {
+    await ensureMembership(editorUser.id, tenantId, 'editor');
+  }
+
+  if (viewerUser) {
+    await ensureMembership(viewerUser.id, tenantId, 'viewer');
+  }
+
   console.log('✓ Users created:');
   console.log('  - admin@crm-threat.com / admin123 (admin)');
   console.log('  - editor@crm-threat.com / editor123 (editor)');
   console.log('  - viewer@crm-threat.com / viewer123 (viewer)');
 }
 
-async function seedThreats() {
+async function seedThreats(tenantId: string) {
   console.log('\nSeeding threats from CSV...');
 
   // Read the threats CSV file
@@ -145,6 +204,7 @@ async function seedThreats() {
     try {
       await db.insert(threats).values({
         id: record['ID'],
+        tenantId,
         strideCategory: mapStrideCategory(record['STRIDE Category']),
         title: record['Threat Title'],
         affectedComponents: record['Affected Components'],
@@ -170,12 +230,54 @@ async function seedThreats() {
   console.log('\n✓ Threats imported successfully');
 }
 
+async function seedTenantRequirements(tenantId: string) {
+  console.log('\nSeeding tenant-scoped requirements and mitigations...');
+
+  const [existingRequirement] = await db
+    .select()
+    .from(requirements)
+    .where(
+      and(
+        eq(requirements.tenantId, tenantId),
+        eq(requirements.section, 'Tenant Isolation'),
+        eq(requirements.description, 'Enforce tenant filtering in server actions using tenant context.')
+      )
+    )
+    .limit(1);
+
+  if (!existingRequirement) {
+    await db.insert(requirements).values({
+      tenantId,
+      section: 'Tenant Isolation',
+      description: 'Enforce tenant filtering in server actions using tenant context.',
+      status: 'implemented',
+      priority: 'P0',
+      threatRefs: ['TM-017'],
+    });
+  }
+
+  await db.insert(mitigations).values({
+    tenantId,
+    code: 'P0-1',
+    title: 'Tenant-aware threat mutations',
+    description: 'Scope threat mutations and audit logs to the active tenant.',
+    threatRefs: ['TM-017'],
+    priority: 'P0',
+    owner: 'Security Team',
+    status: 'completed',
+  }).onConflictDoNothing();
+
+  console.log('✓ Tenant-scoped requirements and mitigations created');
+}
+
 async function main() {
   console.log('Starting database seed...\n');
 
   try {
-    await seedUsers();
-    await seedThreats();
+    const tenantId = await seedTenant();
+    await seedUsers(tenantId);
+    await seedThreats(tenantId);
+    await seedTenantRequirements(tenantId);
 
     console.log('\n✅ Database seeding completed successfully!');
     process.exit(0);

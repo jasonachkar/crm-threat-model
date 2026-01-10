@@ -9,21 +9,21 @@ const requirementSections = [
       {
         id: 'REQ-001',
         description: 'Implement row-level security (RLS) to enforce tenant_id filtering on all queries',
-        status: 'not_implemented',
+        status: 'implemented',
         priority: 'P0',
         threatRefs: ['TM-017', 'TM-012'],
       },
       {
         id: 'REQ-002',
         description: 'Add tenant_id validation middleware to all API endpoints',
-        status: 'not_implemented',
+        status: 'in_progress',
         priority: 'P0',
         threatRefs: ['TM-017', 'TM-012'],
       },
       {
         id: 'REQ-003',
         description: 'Enforce tenant isolation in background jobs and async processes',
-        status: 'not_implemented',
+        status: 'in_progress',
         priority: 'P1',
         threatRefs: ['TM-017'],
       },
@@ -176,9 +176,11 @@ const getPriorityColor = (priority: string) => {
 
 export default function RequirementsPage() {
   const totalRequirements = requirementSections.reduce((acc, section) => acc + section.requirements.length, 0);
-  const implementedCount = 0; // All are not_implemented for now
-  const inProgressCount = 0;
-  const notImplementedCount = totalRequirements;
+  const allRequirements = requirementSections.flatMap((section) => section.requirements);
+  const implementedCount = allRequirements.filter((req) => req.status === 'implemented').length;
+  const inProgressCount = allRequirements.filter((req) => req.status === 'in_progress').length;
+  const partialCount = allRequirements.filter((req) => req.status === 'partial').length;
+  const notImplementedCount = totalRequirements - implementedCount - inProgressCount - partialCount;
 
   return (
     <div className="space-y-6">
@@ -267,4 +269,38 @@ export default function RequirementsPage() {
       </div>
     </div>
   );
+import { db } from '@/lib/db';
+import { auditLog, requirements } from '@/lib/db/schema';
+import { asc, desc, eq } from 'drizzle-orm';
+import RequirementsManager from '@/components/requirements-manager';
+
+export default async function RequirementsPage() {
+  const requirementRows = await db
+    .select()
+    .from(requirements)
+    .orderBy(asc(requirements.section), asc(requirements.createdAt));
+
+  const recentChanges = await db
+    .select()
+    .from(auditLog)
+    .where(eq(auditLog.entityType, 'requirement'))
+    .orderBy(desc(auditLog.createdAt))
+    .limit(6);
+
+  const requirementsData = requirementRows.map((req) => ({
+    ...req,
+    threatRefs: req.threatRefs ?? [],
+    createdAt: req.createdAt.toISOString(),
+    updatedAt: req.updatedAt.toISOString(),
+  }));
+
+  const recentChangesData = recentChanges.map((entry) => ({
+    id: entry.id,
+    action: entry.action,
+    entityId: entry.entityId,
+    createdAt: entry.createdAt.toISOString(),
+    changes: entry.changes,
+  }));
+
+  return <RequirementsManager requirements={requirementsData} recentChanges={recentChangesData} />;
 }

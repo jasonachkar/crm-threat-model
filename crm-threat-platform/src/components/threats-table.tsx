@@ -24,6 +24,13 @@ import { getThreatAttackMapping } from '@/lib/mitre-attack';
 
 interface ThreatsTableProps {
   threats: Threat[];
+  initialFilters?: {
+    query?: string;
+    stride?: string;
+    severity?: string;
+    priority?: string;
+    status?: string;
+  };
 }
 
 const strideCategories = [
@@ -56,6 +63,12 @@ export default function ThreatsTable({ threats }: ThreatsTableProps) {
 
   // Calculate all risk scores
   const riskScores = useMemo(() => calculateAllRiskScores(threats), [threats]);
+export default function ThreatsTable({ threats, initialFilters }: ThreatsTableProps) {
+  const [searchQuery, setSearchQuery] = useState(initialFilters?.query ?? '');
+  const [strideFilter, setStrideFilter] = useState(initialFilters?.stride ?? 'All');
+  const [severityFilter, setSeverityFilter] = useState(initialFilters?.severity ?? 'All');
+  const [priorityFilter, setPriorityFilter] = useState(initialFilters?.priority ?? 'All');
+  const [statusFilter, setStatusFilter] = useState(initialFilters?.status ?? 'All');
 
   const filteredAndSortedThreats = useMemo(() => {
     // Filter first
@@ -64,7 +77,12 @@ export default function ThreatsTable({ threats }: ThreatsTableProps) {
         searchQuery === '' ||
         threat.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         threat.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        threat.affectedComponents.toLowerCase().includes(searchQuery.toLowerCase());
+        threat.affectedComponents.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        threat.cloudProvider?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        threat.cloudAssetType?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        threat.cloudControlMapping?.some((mapping) =>
+          mapping.toLowerCase().includes(searchQuery.toLowerCase()),
+        );
 
       const matchesStride = strideFilter === 'All' || threat.strideCategory === strideFilter;
       const matchesSeverity = severityFilter === 'All' || threat.severity === severityFilter;

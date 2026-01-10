@@ -11,6 +11,24 @@ export default async function ThreatsPage({
 }) {
   // Fetch all threats from database
   const allThreats = await db.select().from(threats).orderBy(desc(threats.severity), threats.id);
+  const getParam = (value: string | string[] | undefined) =>
+    Array.isArray(value) ? value[0] : value;
+  const strideParam = getParam(searchParams.stride);
+  const severityParam = getParam(searchParams.severity);
+  const priorityParam = getParam(searchParams.priority);
+  const statusParam = getParam(searchParams.status);
+  const queryParam = getParam(searchParams.query);
+  const strideOptions = [
+    'Spoofing',
+    'Tampering',
+    'Repudiation',
+    'Information Disclosure',
+    'Denial of Service',
+    'Elevation of Privilege',
+  ];
+  const severityOptions = ['LOW', 'MEDIUM', 'HIGH'];
+  const priorityOptions = ['P0', 'P1', 'P2'];
+  const statusOptions = ['Open', 'In Progress', 'Mitigated', 'Accepted Risk', 'Closed'];
 
   return (
     <div className="space-y-6">
@@ -24,7 +42,16 @@ export default async function ThreatsPage({
         <ExportThreats threats={allThreats} />
       </div>
 
-      <ThreatsTable threats={allThreats} />
+      <ThreatsTable
+        threats={allThreats}
+        initialFilters={{
+          query: queryParam,
+          stride: strideOptions.includes(strideParam ?? '') ? strideParam : undefined,
+          severity: severityOptions.includes(severityParam ?? '') ? severityParam : undefined,
+          priority: priorityOptions.includes(priorityParam ?? '') ? priorityParam : undefined,
+          status: statusOptions.includes(statusParam ?? '') ? statusParam : undefined,
+        }}
+      />
     </div>
   );
 }

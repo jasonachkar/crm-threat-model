@@ -2,7 +2,7 @@
 
 import { db } from '@/lib/db';
 import { threats, auditLog } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { auth } from '@/lib/auth';
 import { revalidatePath } from 'next/cache';
 
@@ -14,6 +14,12 @@ export async function updateThreatStatus(
 
   if (!session?.user) {
     throw new Error('Unauthorized');
+  }
+
+  const tenantId = session.user.tenantId;
+
+  if (!tenantId) {
+    throw new Error('Tenant context missing');
   }
 
   // Only editors and admins can update status
@@ -33,6 +39,10 @@ export async function updateThreatStatus(
       throw new Error('Threat not found');
     }
 
+    if (currentThreat.tenantId !== tenantId) {
+      throw new Error('Tenant mismatch');
+    }
+
     // Update threat status
     await db
       .update(threats)
@@ -40,11 +50,12 @@ export async function updateThreatStatus(
         status: newStatus,
         updatedAt: new Date(),
       })
-      .where(eq(threats.id, threatId));
+      .where(and(eq(threats.id, threatId), eq(threats.tenantId, tenantId)));
 
     // Create audit log entry
     await db.insert(auditLog).values({
       userId: session.user.id,
+      tenantId,
       action: 'update_threat_status',
       entityType: 'threat',
       entityId: threatId,
@@ -83,6 +94,12 @@ export async function updateThreat(threatId: string, data: {
     throw new Error('Unauthorized');
   }
 
+  const tenantId = session.user.tenantId;
+
+  if (!tenantId) {
+    throw new Error('Tenant context missing');
+  }
+
   // Only editors and admins can edit threats
   if (session.user.role === 'viewer') {
     throw new Error('Insufficient permissions');
@@ -100,6 +117,10 @@ export async function updateThreat(threatId: string, data: {
       throw new Error('Threat not found');
     }
 
+    if (currentThreat.tenantId !== tenantId) {
+      throw new Error('Tenant mismatch');
+    }
+
     // Update threat
     await db
       .update(threats)
@@ -107,11 +128,12 @@ export async function updateThreat(threatId: string, data: {
         ...data,
         updatedAt: new Date(),
       })
-      .where(eq(threats.id, threatId));
+      .where(and(eq(threats.id, threatId), eq(threats.tenantId, tenantId)));
 
     // Create audit log entry
     await db.insert(auditLog).values({
       userId: session.user.id,
+      tenantId,
       action: 'update_threat',
       entityType: 'threat',
       entityId: threatId,
@@ -140,6 +162,12 @@ export async function deleteThreat(threatId: string) {
     throw new Error('Unauthorized');
   }
 
+  const tenantId = session.user.tenantId;
+
+  if (!tenantId) {
+    throw new Error('Tenant context missing');
+  }
+
   // Only admins can delete threats
   if (session.user.role !== 'admin') {
     throw new Error('Insufficient permissions - admin only');
@@ -157,12 +185,19 @@ export async function deleteThreat(threatId: string) {
       throw new Error('Threat not found');
     }
 
+    if (currentThreat.tenantId !== tenantId) {
+      throw new Error('Tenant mismatch');
+    }
+
     // Delete threat
-    await db.delete(threats).where(eq(threats.id, threatId));
+    await db
+      .delete(threats)
+      .where(and(eq(threats.id, threatId), eq(threats.tenantId, tenantId)));
 
     // Create audit log entry
     await db.insert(auditLog).values({
       userId: session.user.id,
+      tenantId,
       action: 'delete_threat',
       entityType: 'threat',
       entityId: threatId,
