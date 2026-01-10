@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Shield, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 import Link from 'next/link';
 import DashboardCharts from '@/components/dashboard-charts';
+import { mitigations } from '@/lib/data/mitigations';
 import { and, eq, gte } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
@@ -57,6 +58,78 @@ export default async function DashboardPage() {
     .filter(t => (t.severity === 'HIGH' && t.status === 'Open') || t.priority === 'P0')
     .slice(0, 5);
 
+  const severityWeight = {
+    HIGH: 3,
+    MEDIUM: 2,
+    LOW: 1,
+  };
+
+  const cloudAssetRiskMap = allThreats.reduce((acc, threat) => {
+    if (!threat.cloudAssetType) {
+      return acc;
+    }
+    if (!acc[threat.cloudAssetType]) {
+      acc[threat.cloudAssetType] = { score: 0, threatIds: [] as string[] };
+    }
+    acc[threat.cloudAssetType].score += severityWeight[threat.severity] ?? 0;
+    acc[threat.cloudAssetType].threatIds.push(threat.id);
+    return acc;
+  }, {} as Record<string, { score: number; threatIds: string[] }>);
+
+  const topCloudAssets = Object.entries(cloudAssetRiskMap)
+    .map(([assetType, details]) => ({
+      assetType,
+      score: details.score,
+      threatIds: details.threatIds,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  const mitigationImpact = mitigations
+    .map((mitigation) => {
+      const linkedThreats = allThreats.filter((threat) => mitigation.threatRefs.includes(threat.id));
+      const score = linkedThreats.reduce(
+        (total, threat) => total + (severityWeight[threat.severity] ?? 0),
+        0,
+      );
+      return {
+        ...mitigation,
+        score,
+        linkedThreats,
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  const renderThreatLinks = (threatIds: string[], fallbackHref: string) => {
+    if (threatIds.length === 0) {
+      return <span className="text-xs text-muted-foreground">No linked threats</span>;
+    }
+    const visible = threatIds.slice(0, 4);
+    const remaining = threatIds.length - visible.length;
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        {visible.map((id) => (
+          <Link
+            key={id}
+            href={`/threats/${id}`}
+            className="rounded-full border border-muted px-2 py-0.5 text-muted-foreground hover:text-foreground"
+          >
+            {id}
+          </Link>
+        ))}
+        {remaining > 0 && (
+          <Link
+            href={fallbackHref}
+            className="text-xs text-blue-600 hover:text-blue-700"
+          >
+            +{remaining} more
+          </Link>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -74,7 +147,12 @@ export default async function DashboardPage() {
             <Shield className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.total}</div>
+            <Link
+              href="/threats"
+              className="text-2xl font-bold text-blue-600 hover:text-blue-700"
+            >
+              {stats.total}
+            </Link>
             <p className="text-xs text-muted-foreground">
               Across all STRIDE categories
             </p>
@@ -87,7 +165,12 @@ export default async function DashboardPage() {
             <AlertTriangle className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats.highSeverity}</div>
+            <Link
+              href="/threats?severity=HIGH"
+              className="text-2xl font-bold text-red-600 hover:text-red-700"
+            >
+              {stats.highSeverity}
+            </Link>
             <p className="text-xs text-muted-foreground">
               Require immediate attention
             </p>
@@ -100,7 +183,12 @@ export default async function DashboardPage() {
             <Clock className="h-4 w-4 text-orange-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{stats.p0Priority}</div>
+            <Link
+              href="/threats?priority=P0"
+              className="text-2xl font-bold text-orange-600 hover:text-orange-700"
+            >
+              {stats.p0Priority}
+            </Link>
             <p className="text-xs text-muted-foreground">
               Due within 30 days
             </p>
@@ -113,7 +201,12 @@ export default async function DashboardPage() {
             <CheckCircle2 className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats.mitigated}</div>
+            <Link
+              href="/threats?status=Mitigated"
+              className="text-2xl font-bold text-green-600 hover:text-green-700"
+            >
+              {stats.mitigated}
+            </Link>
             <p className="text-xs text-muted-foreground">
               {stats.total > 0 ? Math.round((stats.mitigated / stats.total) * 100) : 0}% completion rate
             </p>
@@ -124,6 +217,86 @@ export default async function DashboardPage() {
       {/* Charts */}
       <DashboardCharts threats={allThreats} />
 
+      {/* Top 5 Risk Reductions */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Top 5 Risk Reductions</CardTitle>
+          <CardDescription>
+            Highest-risk cloud assets and most impactful mitigations with direct traceability
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-6 md:grid-cols-2">
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground">Top Cloud Assets at Risk</h3>
+                <p className="text-xs text-muted-foreground">
+                  Weighted by threat severity across cloud asset types
+                </p>
+              </div>
+              {topCloudAssets.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Add cloud asset types to threats to populate this list.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {topCloudAssets.map((asset) => (
+                    <div key={asset.assetType} className="rounded-lg border p-3">
+                      <div className="flex items-center justify-between">
+                        <Link
+                          href={`/threats?query=${encodeURIComponent(asset.assetType)}`}
+                          className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                        >
+                          {asset.assetType}
+                        </Link>
+                        <Badge variant="secondary">Risk score {asset.score}</Badge>
+                      </div>
+                      <div className="mt-2">
+                        {renderThreatLinks(
+                          asset.threatIds,
+                          `/threats?query=${encodeURIComponent(asset.assetType)}`,
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-muted-foreground">Most Effective Mitigations</h3>
+                <p className="text-xs text-muted-foreground">
+                  Ranked by severity-weighted threat coverage
+                </p>
+              </div>
+              {mitigationImpact.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No mitigation coverage data available yet.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {mitigationImpact.map((mitigation) => (
+                    <div key={mitigation.id} className="rounded-lg border p-3">
+                      <div className="flex items-center justify-between">
+                        <Link
+                          href={`/mitigations#${mitigation.id}`}
+                          className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                        >
+                          {mitigation.code}: {mitigation.title}
+                        </Link>
+                        <Badge variant="secondary">Coverage {mitigation.score}</Badge>
+                      </div>
+                      <div className="mt-2">
+                        {renderThreatLinks(
+                          mitigation.linkedThreats.map((threat) => threat.id),
+                          '/threats',
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
       {/* Security Posture */}
       <Card>
         <CardHeader>
@@ -208,13 +381,44 @@ export default async function DashboardPage() {
             {Object.entries(strideBreakdown).map(([category, counts]) => (
               <div key={category} className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline">{category}</Badge>
-                  <span className="text-sm text-muted-foreground">{counts.total} threats</span>
+                  <Link
+                    href={`/threats?stride=${encodeURIComponent(category)}`}
+                    className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                  >
+                    <Badge variant="outline">{category}</Badge>
+                  </Link>
+                  <Link
+                    href={`/threats?stride=${encodeURIComponent(category)}`}
+                    className="text-sm text-muted-foreground hover:text-foreground"
+                  >
+                    {counts.total} threats
+                  </Link>
                 </div>
                 <div className="flex gap-1">
-                  {counts.high > 0 && <Badge className="bg-red-600">{counts.high} High</Badge>}
-                  {counts.medium > 0 && <Badge className="bg-orange-500">{counts.medium} Medium</Badge>}
-                  {counts.low > 0 && <Badge className="bg-green-600">{counts.low} Low</Badge>}
+                  {counts.high > 0 && (
+                    <Link
+                      href={`/threats?stride=${encodeURIComponent(category)}&severity=HIGH`}
+                      className="text-xs"
+                    >
+                      <Badge className="bg-red-600">{counts.high} High</Badge>
+                    </Link>
+                  )}
+                  {counts.medium > 0 && (
+                    <Link
+                      href={`/threats?stride=${encodeURIComponent(category)}&severity=MEDIUM`}
+                      className="text-xs"
+                    >
+                      <Badge className="bg-orange-500">{counts.medium} Medium</Badge>
+                    </Link>
+                  )}
+                  {counts.low > 0 && (
+                    <Link
+                      href={`/threats?stride=${encodeURIComponent(category)}&severity=LOW`}
+                      className="text-xs"
+                    >
+                      <Badge className="bg-green-600">{counts.low} Low</Badge>
+                    </Link>
+                  )}
                 </div>
               </div>
             ))}
@@ -229,7 +433,12 @@ export default async function DashboardPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Open Threats</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-red-600">{stats.open}</div>
+            <Link
+              href="/threats?status=Open"
+              className="text-3xl font-bold text-red-600 hover:text-red-700"
+            >
+              {stats.open}
+            </Link>
             <p className="text-xs text-muted-foreground mt-1">Need assignment and planning</p>
           </CardContent>
         </Card>
@@ -238,7 +447,12 @@ export default async function DashboardPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">In Progress</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-blue-600">{stats.inProgress}</div>
+            <Link
+              href="/threats?status=In%20Progress"
+              className="text-3xl font-bold text-blue-600 hover:text-blue-700"
+            >
+              {stats.inProgress}
+            </Link>
             <p className="text-xs text-muted-foreground mt-1">Currently being addressed</p>
           </CardContent>
         </Card>
@@ -247,7 +461,12 @@ export default async function DashboardPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Completed</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-green-600">{stats.mitigated}</div>
+            <Link
+              href="/threats?status=Mitigated"
+              className="text-3xl font-bold text-green-600 hover:text-green-700"
+            >
+              {stats.mitigated}
+            </Link>
             <p className="text-xs text-muted-foreground mt-1">Mitigated or closed</p>
           </CardContent>
         </Card>

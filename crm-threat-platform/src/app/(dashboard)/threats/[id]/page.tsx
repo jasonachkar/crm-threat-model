@@ -197,6 +197,41 @@ export default async function ThreatDetailPage({ params }: { params: { id: strin
         </Card>
       </div>
 
+      {(threat.cloudProvider || threat.cloudAssetType || threat.cloudControlMapping?.length) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Cloud Context</CardTitle>
+            <CardDescription>Cloud-specific metadata for traceability</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div>
+                <div className="text-sm font-medium mb-2">Cloud Provider</div>
+                <Badge variant="outline">{threat.cloudProvider || 'N/A'}</Badge>
+              </div>
+              <div>
+                <div className="text-sm font-medium mb-2">Asset Type</div>
+                <Badge variant="outline">{threat.cloudAssetType || 'N/A'}</Badge>
+              </div>
+              <div>
+                <div className="text-sm font-medium mb-2">Control Mapping</div>
+                {threat.cloudControlMapping?.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {threat.cloudControlMapping.map((control) => (
+                      <Badge key={control} variant="secondary">
+                        {control}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <Badge variant="outline">N/A</Badge>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Ownership & Timeline */}
       <Card>
         <CardHeader>
